@@ -1,0 +1,1311 @@
+diff --git a/config/keymap.cfg b/config/keymap.cfg
+index ac0a991..e4ed0f0 100644
+--- a/config/keymap.cfg
++++ b/config/keymap.cfg
+@@ -136,3 +136,26 @@ keymap 0x40000075 HELP
+ keymap 0x40000046 PRINT 
+ keymap 0x4000009a SYSREQ 
+ keymap 0x40000076 MENU 
++
++// LG webOS TVs: game controllers (src/engine/webos.cpp)
++keymap -100 PAD_A
++keymap -101 PAD_B
++keymap -102 PAD_X
++keymap -103 PAD_Y
++keymap -104 PAD_BACK
++keymap -105 PAD_GUIDE
++keymap -106 PAD_START
++keymap -107 PAD_LSTICK
++keymap -108 PAD_RSTICK
++keymap -109 PAD_L1
++keymap -110 PAD_R1
++keymap -111 PAD_UP
++keymap -112 PAD_DOWN
++keymap -113 PAD_LEFT
++keymap -114 PAD_RIGHT
++keymap -120 PAD_L2
++keymap -121 PAD_R2
++keymap -130 PAD_LS_UP
++keymap -131 PAD_LS_DOWN
++keymap -132 PAD_LS_LEFT
++keymap -133 PAD_LS_RIGHT
+diff --git a/config/webos.cfg b/config/webos.cfg
+new file mode 100644
+index 0000000..a879ebb
+--- /dev/null
++++ b/config/webos.cfg
+@@ -0,0 +1,54 @@
++// LG webOS TVs: the remote and game controllers, with the Quake III port's controls, and the
++// settings for the TV. main.cpp runs this on the first start and when it changes;
++// src/engine/webos.cpp turns the controllers' buttons and sticks into these keys.
++
++// The remote: the arrows walk and turn, OK shoots, and Back (Escape) opens the menu.
++bind "UP"     [forward]
++bind "DOWN"   [backward]
++bind "LEFT"   [turnleft]
++bind "RIGHT"  [turnright]
++bind "RETURN" [shoot]
++
++// Game controllers: the left stick (or the D-pad) walks and the right stick looks.
++bind "PAD_LS_UP"    [forward]
++bind "PAD_LS_DOWN"  [backward]
++bind "PAD_LS_LEFT"  [left]
++bind "PAD_LS_RIGHT" [right]
++bind "PAD_UP"       [forward]
++bind "PAD_DOWN"     [backward]
++bind "PAD_LEFT"     [left]
++bind "PAD_RIGHT"    [right]
++// R2/RT shoots and L2/LT zooms
++bind "PAD_R2" [shoot]
++bind "PAD_L2" [dozoom]
++// L1/LB and Cross/A jump, Circle/B crouches, Square/X hits
++bind "PAD_L1" [jump]
++bind "PAD_A"  [jump]
++bind "PAD_B"  [crouch]
++bind "PAD_X"  [melee]
++// R1/RB and Triangle/Y change weapons, to the next and the previous
++bind "PAD_R1" [nextweapon 1]
++bind "PAD_Y"  [nextweapon -1]
++// Share/Back holds the scores up; Options/Start is the menu (Escape)
++bind "PAD_BACK" [holdui scoreboard]
++
++// spectating
++specbind "PAD_R2" [nextfollow]
++specbind "PAD_L2" [nextfollow -1]
++specbind "PAD_A"  [nextspecmode]
++specbind "PAD_L1" [nextspecmode]
++specbind "PAD_B"  [floatspeed 25;onrelease [floatspeed 100]]
++
++// editing: the controllers walk, look and jump as in the game
++editbind "PAD_R2" [editdrag]
++editbind "PAD_L2" [editextend]
++
++// The TV's GPU: volumetric light (sunbeams) halves the frame rate in sunlit views, and drawing
++// 75% of the screen's width and height (1440x810 at 1080p) gains half again in busy views.
++volumetric 0
++gscale 75
++// FXAA smooths edges for next to nothing; SMAA and temporal AA (in the options) cost 15-20%.
++fxaa 1
++
++// the version of this file: main.cpp runs it again when WEBOS_CONFIG is newer
++webosconfig 4
+diff --git a/src/engine/aa.cpp b/src/engine/aa.cpp
+index c0167c0..b06f406 100644
+--- a/src/engine/aa.cpp
++++ b/src/engine/aa.cpp
+@@ -168,7 +168,11 @@ void cleanupfxaa()
+     clearfxaashaders();
+ }
+ 
++#ifdef WEBOS_GLES
++VARFP(fxaa, 0, 1, 1, cleanupfxaa()); // on: it costs the TV's GPU next to nothing
++#else
+ VARFP(fxaa, 0, 0, 1, cleanupfxaa());
++#endif
+ VARFP(fxaaquality, 0, 1, 3, cleanupfxaa());
+ VARFP(fxaagreenluma, 0, 0, 1, cleanupfxaa());
+ 
+diff --git a/src/engine/command.cpp b/src/engine/command.cpp
+index 9e56c78..05afc9f 100644
+--- a/src/engine/command.cpp
++++ b/src/engine/command.cpp
+@@ -3209,6 +3209,9 @@ bool validateblock(const char *s)
+ #ifndef STANDALONE
+ void writecfg(const char *name)
+ {
++#ifdef WEBOS_GLES
++    if(getenv("WEBOS_EXEC")) return; // a test run's settings (main.cpp) aren't kept
++#endif
+     stream *f = openutf8file(path(name && name[0] ? name : game::savedconfig(), true), "w");
+     if(!f) return;
+     f->printf("// automatically written on exit, DO NOT MODIFY\n// delete this file to have %s overwrite these settings\n// modify settings in game, or put settings in %s to override anything\n\n", game::defaultconfig(), game::autoexec());
+diff --git a/src/engine/engine.h b/src/engine/engine.h
+index f462ce9..8327217 100644
+--- a/src/engine/engine.h
++++ b/src/engine/engine.h
+@@ -733,6 +733,9 @@ namespace UI
+     void getcursorpos(float &x, float &y);
+     void resetcursor();
+     bool movecursor(int dx, int dy);
++#ifdef WEBOS_GLES
++    bool navigate(int dx, int dy);
++#endif
+     bool keypress(int code, bool isdown);
+     bool textinput(const char *str, int len);
+     float abovehud();
+diff --git a/src/engine/main.cpp b/src/engine/main.cpp
+index 0eeaea1..1d77801 100644
+--- a/src/engine/main.cpp
++++ b/src/engine/main.cpp
+@@ -605,6 +605,15 @@ void setupscreen()
+     SDL_SetWindowMinimumSize(screen, SCR_MINW, SCR_MINH);
+     SDL_SetWindowMaximumSize(screen, SCR_MAXW, SCR_MAXH);
+ 
++#ifdef WEBOS_GLES
++    // LG webOS TVs: OpenGL ES 3.2, which gl_checkextensions() takes as OpenGL 3.1 and the ES
++    // features it has
++    glcompat = 0;
++    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
++    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
++    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
++    glcontext = SDL_GL_CreateContext(screen);
++#else
+ #ifdef __APPLE__
+     static const int glversions[] = { 32, 20 };
+ #else
+@@ -619,6 +628,7 @@ void setupscreen()
+         glcontext = SDL_GL_CreateContext(screen);
+         if(glcontext) break;
+     }
++#endif
+     if(!glcontext) fatal("failed to create OpenGL context: %s", SDL_GetError());
+ 
+     SDL_GetWindowSize(screen, &screenw, &screenh);
+@@ -798,6 +808,10 @@ void checkinput()
+         SDL_Event &event = events.remove();
+ 
+         if(focused && event.type!=SDL_WINDOWEVENT) { if(grabinput != (focused>0)) inputgrab(grabinput = focused>0, shouldgrab); focused = 0; }
++#ifdef WEBOS_GLES
++        extern bool webosevent(const SDL_Event &e);
++        if(webosevent(event)) continue;
++#endif
+ 
+         switch(event.type)
+         {
+@@ -1085,8 +1099,105 @@ int getclockmillis()
+ 
+ VAR(numcpus, 1, 1, 16);
+ 
++#ifdef WEBOS_GLES
++#include <unistd.h>
++#include <signal.h>
++#include <ucontext.h>
++#include <execinfo.h>
++#include <dlfcn.h>
++
++// a crash logs its signal and where it happened, as library+offset (addr2line -e build/tesseract)
++static void webosprintaddr(const char *what, void *addr)
++{
++    Dl_info info;
++    char line[512];
++    if(dladdr(addr, &info) && info.dli_fname)
++        snprintf(line, sizeof(line), "  %s %p %s+%#lx %s\n", what, addr, info.dli_fname, (unsigned long)((char *)addr - (char *)info.dli_fbase), info.dli_sname ? info.dli_sname : "");
++    else snprintf(line, sizeof(line), "  %s %p\n", what, addr);
++    if(write(2, line, strlen(line))) {}
++}
++
++static void weboscrash(int sig, siginfo_t *si, void *ctx)
++{
++    char line[128];
++    snprintf(line, sizeof(line), "crash: signal %d at address %p\n", sig, si ? si->si_addr : NULL);
++    if(write(2, line, strlen(line))) {}
++    ucontext_t *uc = (ucontext_t *)ctx;
++    if(uc)
++    {
++        webosprintaddr("pc", (void *)uc->uc_mcontext.arm_pc);
++        webosprintaddr("lr", (void *)uc->uc_mcontext.arm_lr);
++    }
++    void *frames[32];
++    int n = backtrace(frames, 32);
++    loopi(n) webosprintaddr("at", frames[i]);
++    signal(sig, SIG_DFL);
++    raise(sig);
++}
++
++static void webosexit()
++{
++    const char *line = "exit:\n";
++    if(write(2, line, strlen(line))) {}
++    void *frames[32];
++    int n = backtrace(frames, 32);
++    loopi(n) webosprintaddr("at", frames[i]);
++}
++// LG webOS TVs: the app manager starts the game with its launch parameters (JSON) as the first
++// argument and drops what it prints. The game runs from its app folder, its settings go to the
++// folder's home/, its log to /tmp/tesseract.log, and the remote's Back button goes to the game.
++static void webosinit(int &argc, char **argv)
++{
++    // /tmp/tesseract.env: NAME=value a line, for testing
++    if(FILE *env = fopen("/tmp/tesseract.env", "r"))
++    {
++        char line[512];
++        while(fgets(line, sizeof(line), env))
++        {
++            line[strcspn(line, "\r\n")] = '\0';
++            char *eq = strchr(line, '=');
++            if(eq && eq != line) { *eq = '\0'; setenv(line, eq+1, 1); }
++        }
++        fclose(env);
++    }
++    char exe[1024];
++    ssize_t len = readlink("/proc/self/exe", exe, sizeof(exe)-1);
++    if(len > 0)
++    {
++        exe[len] = '\0';
++        char *slash = strrchr(exe, '/');
++        if(slash) { *slash = '\0'; if(chdir(exe)) {} }
++    }
++    if(argc > 1 && argv[1][0] == '{')
++    {
++        for(int i = 1; i < argc-1; i++) argv[i] = argv[i+1];
++        argc--;
++    }
++    if(freopen("/tmp/tesseract.log", "w", stdout))
++    {
++        setvbuf(stdout, NULL, _IOLBF, 0);
++        dup2(fileno(stdout), 2);
++    }
++    setenv("SDL_WEBOS_ACCESS_POLICY_KEYS_BACK", "true", 1);
++    // SDL's full mode for Sony controllers over Bluetooth, in which it sets the light bar (else a
++    // DualShock 4's keeps blinking) and can rumble
++    setenv("SDL_JOYSTICK_HIDAPI_PS4_RUMBLE", "1", 0);
++    setenv("SDL_JOYSTICK_HIDAPI_PS5_RUMBLE", "1", 0);
++    struct sigaction sa;
++    memset(&sa, 0, sizeof(sa));
++    sa.sa_sigaction = weboscrash;
++    sa.sa_flags = SA_SIGINFO;
++    const int sigs[] = { SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT };
++    loopi(sizeof(sigs)/sizeof(sigs[0])) sigaction(sigs[i], &sa, NULL);
++    if(getenv("WEBOS_DEBUG")) atexit(webosexit);
++}
++#endif
++
+ int main(int argc, char **argv)
+ {
++#ifdef WEBOS_GLES
++    webosinit(argc, argv);
++#endif
+     #ifdef WIN32
+     //atexit((void (__cdecl *)(void))_CrtDumpMemoryLeaks);
+     #ifndef _DEBUG
+@@ -1104,6 +1215,9 @@ int main(int argc, char **argv)
+     initing = INIT_RESET;
+     // set home dir first
+     for(int i = 1; i<argc; i++) if(argv[i][0]=='-' && argv[i][1] == 'u') { sethomedir(&argv[i][2]); break; }
++#ifdef WEBOS_GLES
++    if(!homedir[0]) sethomedir("home");
++#endif
+     // set log after home dir, but before anything else
+     for(int i = 1; i<argc; i++) if(argv[i][0]=='-' && argv[i][1] == 'g')
+     {
+@@ -1149,7 +1263,11 @@ int main(int argc, char **argv)
+     {
+         logoutf("init: sdl");
+ 
++#ifdef WEBOS_GLES
++        if(SDL_Init(SDL_INIT_TIMER|SDL_INIT_VIDEO|SDL_INIT_AUDIO|SDL_INIT_GAMECONTROLLER)<0) fatal("Unable to initialize SDL: %s", SDL_GetError());
++#else
+         if(SDL_Init(SDL_INIT_TIMER|SDL_INIT_VIDEO|SDL_INIT_AUDIO)<0) fatal("Unable to initialize SDL: %s", SDL_GetError());
++#endif
+ 
+ #ifdef SDL_VIDEO_DRIVER_X11
+         SDL_version version;
+@@ -1221,6 +1339,13 @@ int main(int argc, char **argv)
+         writecfg(game::restoreconfig());
+     }
+     execfile(game::autoexec(), false);
++#ifdef WEBOS_GLES
++    // the remote's and the controllers' binds and the TV's settings: on the first start, and again
++    // when a version of the app changes them (config/webos.cfg sets webosconfig); other changes
++    // made in the game stick
++    const int WEBOS_CONFIG = 4;
++    if(getvar("webosconfig") < WEBOS_CONFIG) execfile("config/webos.cfg");
++#endif
+ 
+     identflags &= ~IDF_PERSIST;
+ 
+@@ -1243,6 +1368,13 @@ int main(int argc, char **argv)
+ 
+     if(execfile("once.cfg", false)) remove(findfile("once.cfg", "rb"));
+ 
++#ifdef WEBOS_GLES
++    // for testing (/tmp/tesseract.env): a map to load and commands to run at the start
++    if(!load && getenv("WEBOS_MAP")) { load = getenv("WEBOS_MAP"); seedMT(1); } // the same spawn each time
++    if(!initscript && getenv("WEBOS_EXEC")) initscript = getenv("WEBOS_EXEC");
++    const bool webosdebug = getenv("WEBOS_DEBUG") != NULL;
++#endif
++
+     if(load)
+     {
+         logoutf("init: localconnect");
+@@ -1270,11 +1402,18 @@ int main(int argc, char **argv)
+         timeerr = scaledtime%100;
+         if(!multiplayer(false) && curtime>200) curtime = 200;
+         if(game::ispaused()) curtime = 0;
++#ifdef WEBOS_GLES
++        if(minimized && !multiplayer(false)) curtime = 0; // Home: a local game waits
++#endif
+         lastmillis += curtime;
+         totalmillis = millis;
+         updatetime();
+ 
+         checkinput();
++#ifdef WEBOS_GLES
++        extern void webosupdate(int millis);
++        webosupdate(elapsedtime);
++#endif
+         UI::update();
+         menuprocess();
+         tryedit();
+@@ -1287,12 +1426,31 @@ int main(int argc, char **argv)
+ 
+         if(frames) updatefpshistory(elapsedtime);
+         frames++;
++#ifdef WEBOS_GLES
++        if(webosdebug)
++        {
++            static int lastlog = 0;
++            if(totalmillis - lastlog >= 5000)
++            {
++                int fps, bestdiff, worstdiff;
++                getfps(fps, bestdiff, worstdiff);
++                extern int webosshaderloads, webosshadercompiles;
++                extern uint webosshadermillis;
++                logoutf("fps %d (%d to %d), %dx%d; shaders: %d cached, %d compiled, %u ms", fps, fps - worstdiff, fps + bestdiff, hudw, hudh,
++                        webosshaderloads, webosshadercompiles, webosshadermillis);
++                lastlog = totalmillis;
++            }
++        }
++#endif
+ 
+         // miscellaneous general game effects
+         recomputecamera();
+         updateparticles();
+         updatesounds();
+ 
++#ifdef WEBOS_GLES
++        if(minimized) { SDL_Delay(100); continue; } // Home: 10 frames a second, none drawn
++#endif
+         if(minimized) continue;
+ 
+         gl_setupframe(!mainmenu);
+diff --git a/src/engine/rendergl.cpp b/src/engine/rendergl.cpp
+index bdd9d2e..31af59d 100644
+--- a/src/engine/rendergl.cpp
++++ b/src/engine/rendergl.cpp
+@@ -367,6 +367,29 @@ bool checkdepthtexstencilrb()
+     return supported;
+ }
+ 
++#ifdef WEBOS_GLES
++// OpenGL calls that OpenGL ES lacks (the TV's driver has no such functions), in ES's terms
++static void APIENTRY gles_vertexattrib4nubv(GLuint index, const GLubyte *v)
++{
++    glVertexAttrib4f_(index, v[0]/255.0f, v[1]/255.0f, v[2]/255.0f, v[3]/255.0f);
++}
++static void APIENTRY gles_multidrawarrays(GLenum mode, const GLint *first, const GLsizei *count, GLsizei drawcount)
++{
++    loopi(drawcount) if(count[i] > 0) glDrawArrays(mode, first[i], count[i]);
++}
++static void APIENTRY gles_getqueryobjectiv(GLuint id, GLenum pname, GLint *params)
++{
++    GLuint val = 0;
++    glGetQueryObjectuiv_(id, pname, &val);
++    *params = GLint(val);
++}
++static PFNGLFRAMEBUFFERTEXTURELAYERPROC gles_framebuffertexturelayer = NULL;
++static void APIENTRY gles_framebuffertexture3d(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level, GLint zoffset)
++{
++    gles_framebuffertexturelayer(target, attachment, texture, level, zoffset);
++}
++#endif
++
+ void gl_checkextensions()
+ {
+     const char *vendor = (const char *)glGetString(GL_VENDOR);
+@@ -393,8 +416,14 @@ void gl_checkextensions()
+         intel = true;
+ 
+     uint glmajorversion, glminorversion;
++#ifdef WEBOS_GLES
++    if(sscanf(version, "OpenGL ES %u.%u", &glmajorversion, &glminorversion) != 2 || glmajorversion*10 + glminorversion < 32)
++        fatal("OpenGL ES 3.2 or greater is required!");
++    glversion = 310;
++#else
+     if(sscanf(version, " %u.%u", &glmajorversion, &glminorversion) != 2) glversion = 100;
+     else glversion = glmajorversion*100 + glminorversion*10;
++#endif
+ 
+     if(glversion < 200) fatal("OpenGL 2.0 or greater is required!");
+ 
+@@ -523,7 +552,11 @@ void gl_checkextensions()
+     conoutf(CON_INIT, "GLSL: %s", glslstr ? glslstr : "unknown");
+ 
+     uint glslmajorversion, glslminorversion;
++#ifdef WEBOS_GLES
++    glslversion = 330;
++#else
+     if(glslstr && sscanf(glslstr, " %u.%u", &glslmajorversion, &glslminorversion) == 2) glslversion = glslmajorversion*100 + glslminorversion;
++#endif
+ 
+     if(glslversion < 120) fatal("GLSL 1.20 or greater is required!");
+ 
+@@ -1069,6 +1102,35 @@ void gl_checkextensions()
+         }
+     }
+     if(mesa) mesa_swap_bug = 1;
++#ifdef WEBOS_GLES
++    // what OpenGL ES 3.2 has and hasn't of what OpenGL 3.1 and later extensions would give
++    hasRGTC = hasCR = hasEGPU4 = hasS3TC = hasFXT1 = hasLATC = hasDBT = hasDC = false;
++    usetexcompress = 0;
++    // no glTexImage2DMultisample (so no MSAA), timer queries, dual-source blending, nor (for now)
++    // texture gather
++    hasTMS = hasFBMSBS = hasTQ = hasBFE = hasMSS = hasDBB = hasDBGO = hasTG = hasGPU5 = false;
++    maxdualdrawbufs = 0;
++    usetexgather = 0;
++    hasTSW = hasEAL = hasOQ2 = hasES2 = hasES3 = true;
++    glTexStorage2D_ = (PFNGLTEXSTORAGE2DPROC)getprocaddress("glTexStorage2D");
++    glCopyImageSubData_ = (PFNGLCOPYIMAGESUBDATAPROC)getprocaddress("glCopyImageSubData");
++    hasTS = glTexStorage2D_ != NULL;
++    hasCI = glCopyImageSubData_ != NULL;
++    glVertexAttrib4Nubv_ = gles_vertexattrib4nubv;
++    glMultiDrawArrays_ = gles_multidrawarrays;
++    glGetQueryObjectiv_ = gles_getqueryobjectiv;
++    gles_framebuffertexturelayer = (PFNGLFRAMEBUFFERTEXTURELAYERPROC)getprocaddress("glFramebufferTextureLayer");
++    glFramebufferTexture3D_ = gles_framebuffertexture3d;
++    GLint binaryformats = 0;
++    glGetIntegerv(GL_NUM_PROGRAM_BINARY_FORMATS, &binaryformats);
++    if(binaryformats > 0)
++    {
++        glGetProgramBinary_ = (PFNGLGETPROGRAMBINARYPROC)getprocaddress("glGetProgramBinary");
++        glProgramBinary_ = (PFNGLPROGRAMBINARYPROC)getprocaddress("glProgramBinary");
++        glProgramParameteri_ = (PFNGLPROGRAMPARAMETERIPROC)getprocaddress("glProgramParameteri");
++    }
++    if(dbgexts) conoutf(CON_INIT, "program binary formats: %d", binaryformats);
++#endif
+     if(hasGPU5 && hasTG) tqaaresolvegather = 1;
+ }
+ 
+@@ -2753,9 +2815,17 @@ void gl_drawhud()
+                 int nextfps[3];
+                 getfps(nextfps[0], nextfps[1], nextfps[2]);
+                 loopi(3) if(prevfps[i]==curfps[i]) curfps[i] = nextfps[i];
++#ifdef WEBOS_GLES
++                // in the top right corner, inside the part of the picture a TV may crop
++                defformatstring(fpstext, showfpsrange ? "fps %d+%d-%d" : "fps %d", curfps[0], curfps[1], curfps[2]);
++                float tw, th;
++                text_boundsf(fpstext, tw, th);
++                draw_text(fpstext, int(conw - tw - FONTH), FONTH);
++#else
+                 if(showfpsrange) draw_textf("fps %d+%d-%d", conw-7*FONTH, conh-FONTH*3/2, curfps[0], curfps[1], curfps[2]);
+                 else draw_textf("fps %d", conw-5*FONTH, conh-FONTH*3/2, curfps[0]);
+                 roffset += FONTH;
++#endif
+             }
+ 
+             printtimers(conw, conh);
+diff --git a/src/engine/renderlights.cpp b/src/engine/renderlights.cpp
+index b7b3506..e2b9410 100644
+--- a/src/engine/renderlights.cpp
++++ b/src/engine/renderlights.cpp
+@@ -955,7 +955,13 @@ FVARR(hdrbright, 1e-4f, 1.0f, 1e4f);
+ FVAR(hdrsaturate, 1e-3f, 0.85f, 1e3f);
+ FVAR(hdrminexposure, 0, 0.03f, 1);
+ FVAR(hdrmaxexposure, 0, 0.3f, 1);
++#ifdef WEBOS_GLES
++// 75: the TV's GPU draws 1440x810, stretched to the screen; over 100 draws more than the screen
++// has (200 is 4K on a 1080p screen)
++VARFP(gscale, 25, 75, 200, cleanupgbuffer());
++#else
+ VARFP(gscale, 25, 100, 100, cleanupgbuffer());
++#endif
+ VARFP(gscalecubic, 0, 0, 1, cleanupgbuffer());
+ VARFP(gscalenearest, 0, 0, 1, cleanupgbuffer());
+ FVARFP(gscalecubicsoft, 0, 0, 1, initwarning("scaling setup", INIT_LOAD, CHANGE_SHADERS));
+@@ -2590,7 +2596,11 @@ void cleanupvolumetric()
+     clearvolumetricshaders();
+ }
+ 
++#ifdef WEBOS_GLES
++VARFP(volumetric, 0, 0, 1, cleanupvolumetric()); // off: the TV's GPU halves its frame rate in sunlit views with it
++#else
+ VARFP(volumetric, 0, 1, 1, cleanupvolumetric());
++#endif
+ VARFP(volreduce, 0, 1, 2, cleanupvolumetric());
+ VARFP(volbilateral, 0, 1, 3, cleanupvolumetric());
+ FVAR(volbilateraldepth, 0, 4, 1e3f);
+diff --git a/src/engine/shader.cpp b/src/engine/shader.cpp
+index cbc5087..1e8050b 100644
+--- a/src/engine/shader.cpp
++++ b/src/engine/shader.cpp
+@@ -165,11 +165,16 @@ static void compileglslshader(Shader &s, GLenum type, GLuint &obj, const char *d
+         { 130, "#version 130\n" },
+         { 120, "#version 120\n" }
+     };
++#ifdef WEBOS_GLES
++    // OpenGL ES: rectangle textures are 2D textures, sampled in pixels, and the precision is high
++    parts[numparts++] = "#version 320 es\n";
++#else
+     loopi(sizeof(glslversions)/sizeof(glslversions[0])) if(glslversion >= glslversions[i].version)
+     {
+         parts[numparts++] = glslversions[i].header;
+         break;
+     }
++#endif
+     if(glslversion < 140)
+     {
+         parts[numparts++] = "#extension GL_ARB_texture_rectangle : enable\n";
+@@ -227,7 +232,20 @@ static void compileglslshader(Shader &s, GLenum type, GLuint &obj, const char *d
+             "#define shadow2DOffset(sampler, coords, offset) textureOffset(sampler, coords, offset)\n"
+             "#define texture3D(sampler, coords) texture(sampler, coords)\n"
+             "#define textureCube(sampler, coords) texture(sampler, coords)\n";
++#ifdef WEBOS_GLES
++        parts[numparts++] =
++            "#define sampler2DRect sampler2D\n"
++            "#define sampler2DRectShadow sampler2DShadow\n"
++            "#define rectsize(sampler) vec2(textureSize(sampler, 0))\n"
++            "#define texture2DRect(sampler, coords) texture(sampler, (coords) / rectsize(sampler))\n"
++            "#define texture2DRectProj(sampler, coords) textureProj(sampler, vec3((coords).xy / rectsize(sampler), (coords).z))\n"
++            "#define shadow2DRect(sampler, coords) texture(sampler, vec3((coords).xy / rectsize(sampler), (coords).z))\n"
++            "#define texture2DRectOffset(sampler, coords, offset) textureOffset(sampler, (coords) / rectsize(sampler), offset)\n"
++            "#define shadow2DRectOffset(sampler, coords, offset) textureOffset(sampler, vec3((coords).xy / rectsize(sampler), (coords).z), offset)\n";
++        if(false)
++#else
+         if(glslversion >= 140)
++#endif
+         {
+             parts[numparts++] =
+                 "#define texture2DRect(sampler, coords) texture(sampler, coords)\n"
+@@ -283,6 +301,20 @@ static void compileglslshader(Shader &s, GLenum type, GLuint &obj, const char *d
+             }
+         }
+     }
++#ifdef WEBOS_GLES
++    parts[numparts++] =
++        "precision highp float;\n"
++        "precision highp int;\n"
++        "precision highp sampler2D;\n"
++        "precision highp sampler3D;\n"
++        "precision highp samplerCube;\n"
++        "precision highp sampler2DShadow;\n"
++        "precision highp samplerCubeShadow;\n"
++        "precision highp sampler2DArray;\n"
++        "precision highp sampler2DArrayShadow;\n"
++        "precision highp isampler2D;\n"
++        "precision highp usampler2D;\n";
++#endif
+     parts[numparts++] = modsource ? modsource : source;
+ 
+     obj = glCreateShader_(type);
+@@ -346,6 +378,8 @@ static void bindworldtexlocs(Shader &s)
+     UNIFORMTEX("refractlight", 8);
+ }
+ 
++static void setupglslprogram(Shader &s);
++
+ static void linkglslprogram(Shader &s, bool msg = true)
+ {
+     s.program = s.vsobj && s.psobj ? glCreateProgram_() : 0;
+@@ -371,10 +405,23 @@ static void linkglslprogram(Shader &s, bool msg = true)
+             }
+             else glBindFragDataLocation_(s.program, d.loc, d.name);
+         }
++#ifdef WEBOS_GLES
++        if(glProgramParameteri_) glProgramParameteri_(s.program, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
++#endif
+         glLinkProgram_(s.program);
+         glGetProgramiv_(s.program, GL_LINK_STATUS, &success);
+     }
+-    if(success)
++    if(success) setupglslprogram(s);
++    else if(s.program)
++    {
++        if(msg) showglslinfo(GL_FALSE, s.program, s.name);
++        glDeleteProgram_(s.program);
++        s.program = 0;
++    }
++}
++
++static void setupglslprogram(Shader &s)
++{
+     {
+         glUseProgram_(s.program);
+         loopi(16)
+@@ -392,12 +439,6 @@ static void linkglslprogram(Shader &s, bool msg = true)
+         loopv(s.uniformlocs) bindglsluniform(s, s.uniformlocs[i]);
+         glUseProgram_(0);
+     }
+-    else if(s.program)
+-    {
+-        if(msg) showglslinfo(GL_FALSE, s.program, s.name);
+-        glDeleteProgram_(s.program);
+-        s.program = 0;
+-    }
+ }
+ 
+ static void findfragdatalocs(Shader &s, char *ps, const char *macroname, int index)
+@@ -711,12 +752,151 @@ void Shader::bindprograms()
+     lastshader = this;
+ }
+ 
++#ifdef WEBOS_GLES
++// The program cache: the TV's driver takes up to a third of a second to compile one of the
++// shaders, and the deferred lighting alone has dozens of variants, which stalled the game for
++// half a minute. The programs it links are kept as OpenGL ES program binaries in
++// home/cache/shaders/, named by a hash of their sources, the driver and this build, and loaded
++// from there the next time.
++PFNGLGETPROGRAMBINARYPROC glGetProgramBinary_ = NULL;
++PFNGLPROGRAMBINARYPROC glProgramBinary_ = NULL;
++PFNGLPROGRAMPARAMETERIPROC glProgramParameteri_ = NULL;
++int webosshaderloads = 0, webosshadercompiles = 0;
++uint webosshadermillis = 0;
++
++// the shader whose vertex or fragment source a shader uses: its own, or the one it reuses
++static Shader *shadersource(Shader *s, bool vs)
++{
++    while(s && !(vs ? s->vsstr : s->psstr)) s = vs ? s->reusevs : s->reuseps;
++    return s;
++}
++
++static unsigned long long hashbytes(unsigned long long h, const void *data, size_t len)
++{
++    const uchar *p = (const uchar *)data;
++    loopi(len) { h ^= p[i]; h *= 1099511628211ULL; }
++    return h;
++}
++
++static unsigned long long hashstring(unsigned long long h, const char *s)
++{
++    return hashbytes(h, s ? s : "", s ? strlen(s) + 1 : 1);
++}
++
++static bool programcachepath(Shader &s, string &path)
++{
++    static int usecache = -1;
++    if(usecache < 0)
++    {
++        const char *env = getenv("WEBOS_SHADERCACHE");
++        usecache = glGetProgramBinary_ && glProgramBinary_ && !(env && env[0] == '0') ? 1 : 0;
++    }
++    Shader *vs = shadersource(&s, true), *ps = shadersource(&s, false);
++    if(!usecache || !vs || !ps) return false;
++    unsigned long long h = 14695981039346656037ULL;
++    h = hashstring(h, __DATE__ " " __TIME__);
++    h = hashstring(h, (const char *)glGetString(GL_RENDERER));
++    h = hashstring(h, (const char *)glGetString(GL_VERSION));
++    h = hashstring(h, vs->vsstr);
++    h = hashstring(h, ps->psstr);
++    loopv(s.attriblocs)
++    {
++        h = hashstring(h, s.attriblocs[i].name);
++        h = hashbytes(h, &s.attriblocs[i].loc, sizeof(s.attriblocs[i].loc));
++    }
++    formatstring(path, "cache/shaders/%016llx.bin", h);
++    return true;
++}
++
++static bool loadprogrambinary(Shader &s, const char *path)
++{
++    stream *f = openrawfile(path, "rb");
++    if(!f) return false;
++    int len = int(f->size()) - int(sizeof(GLenum));
++    GLenum format = 0;
++    bool ok = false;
++    if(len > 0 && f->read(&format, sizeof(format)) == sizeof(format))
++    {
++        uchar *buf = new uchar[len];
++        if(f->read(buf, len) == size_t(len))
++        {
++            s.program = glCreateProgram_();
++            glProgramBinary_(s.program, format, buf, len);
++            GLint success = 0;
++            glGetProgramiv_(s.program, GL_LINK_STATUS, &success);
++            if(success) ok = true;
++            else { glDeleteProgram_(s.program); s.program = 0; }
++        }
++        delete[] buf;
++    }
++    delete f;
++    return ok;
++}
++
++static void saveprogrambinary(Shader &s, const char *path)
++{
++    GLint len = 0;
++    glGetProgramiv_(s.program, GL_PROGRAM_BINARY_LENGTH, &len);
++    if(len <= 0) return;
++    uchar *buf = new uchar[len];
++    GLsizei got = 0;
++    GLenum format = 0;
++    glGetProgramBinary_(s.program, len, &got, &format, buf);
++    stream *f = got > 0 ? openrawfile(path, "wb") : NULL;
++    if(f)
++    {
++        f->write(&format, sizeof(format));
++        f->write(buf, got);
++        delete f;
++    }
++    delete[] buf;
++}
++
++bool Shader::compile()
++{
++    static const bool debug = getenv("WEBOS_DEBUG") != NULL;
++    uint start = SDL_GetTicks();
++    string path;
++    bool cache = programcachepath(*this, path), ok;
++    if(cache && loadprogrambinary(*this, path))
++    {
++        setupglslprogram(*this);
++        webosshaderloads++;
++        ok = true;
++    }
++    else
++    {
++        // a shader this one reuses may have come from the cache, without the object to reuse
++        Shader *vs = shadersource(this, true), *ps = shadersource(this, false);
++        if(vs && vs != this && !vs->vsobj && !vs->invalid())
++            compileglslshader(*vs, GL_VERTEX_SHADER, vs->vsobj, vs->vsstr, vs->name, dbgshader || !vs->variantshader);
++        if(ps && ps != this && !ps->psobj && !ps->invalid())
++            compileglslshader(*ps, GL_FRAGMENT_SHADER, ps->psobj, ps->psstr, ps->name, dbgshader || !ps->variantshader);
++        ok = compileprograms();
++        if(ok && cache) saveprogrambinary(*this, path);
++        webosshadercompiles++;
++    }
++    uint took = SDL_GetTicks() - start;
++    webosshadermillis += took;
++    if(debug && took >= 100) logoutf("shader %s: %u ms", name, took);
++    return ok;
++}
++
++bool Shader::compileprograms()
++{
++    Shader *vs = shadersource(reusevs, true), *ps = shadersource(reuseps, false);
++    if(!vsstr) vsobj = !reusevs || reusevs->invalid() || !vs ? 0 : vs->vsobj;
++    else compileglslshader(*this, GL_VERTEX_SHADER,   vsobj, vsstr, name, dbgshader || !variantshader);
++    if(!psstr) psobj = !reuseps || reuseps->invalid() || !ps ? 0 : ps->psobj;
++    else compileglslshader(*this, GL_FRAGMENT_SHADER, psobj, psstr, name, dbgshader || !variantshader);
++#else
+ bool Shader::compile()
+ {
+     if(!vsstr) vsobj = !reusevs || reusevs->invalid() ? 0 : reusevs->vsobj;
+     else compileglslshader(*this, GL_VERTEX_SHADER,   vsobj, vsstr, name, dbgshader || !variantshader);
+     if(!psstr) psobj = !reuseps || reuseps->invalid() ? 0 : reuseps->psobj;
+     else compileglslshader(*this, GL_FRAGMENT_SHADER, psobj, psstr, name, dbgshader || !variantshader);
++#endif
+     linkglslprogram(*this, !variantshader);
+     return program!=0;
+ }
+diff --git a/src/engine/sound.cpp b/src/engine/sound.cpp
+index 73465e7..ec0ecc2 100644
+--- a/src/engine/sound.cpp
++++ b/src/engine/sound.cpp
+@@ -610,6 +610,9 @@ void updatesounds()
+     if(music)
+     {
+         if(!Mix_PlayingMusic()) musicdone();
++#ifdef WEBOS_GLES
++        else if(minimized) { if(!Mix_PausedMusic()) Mix_PauseMusic(); } // webos.cpp resumes it
++#endif
+         else if(Mix_PausedMusic()) Mix_ResumeMusic();
+     }
+ }
+diff --git a/src/engine/texture.cpp b/src/engine/texture.cpp
+index 92f93a8..0e262d2 100644
+--- a/src/engine/texture.cpp
++++ b/src/engine/texture.cpp
+@@ -973,6 +973,34 @@ void setuptexparameters(int tnum, const void *pixels, int clamp, int filter, GLe
+ 
+ static GLenum textype(GLenum &component, GLenum &format)
+ {
++#ifdef WEBOS_GLES
++    // OpenGL ES takes only the internal formats it knows, renders only to some of them, and wants
++    // each with its own format and type: these are the nearest it has to OpenGL's
++    switch(component)
++    {
++        case GL_R3_G3_B2: case GL_RGB5: component = GL_RGB565; break;
++        case GL_R16: component = GL_R16F; break;
++        case GL_RG16: component = GL_RG16F; break;
++        case GL_RGB16: case GL_RGBA16: case GL_RGB16F: component = GL_RGBA16F; break;
++        case GL_RGB32F: component = GL_RGBA32F; break;
++        case GL_DEPTH_COMPONENT32: component = GL_DEPTH_COMPONENT32F; break;
++        case GL_DEPTH_STENCIL: component = GL_DEPTH24_STENCIL8; break;
++        case GL_RGB10:
++            component = GL_RGB10_A2;
++            if(!format) format = GL_RGBA;
++            return GL_UNSIGNED_INT_2_10_10_10_REV;
++        case GL_RGB10_A2:
++            if(!format) format = GL_RGBA;
++            return GL_UNSIGNED_INT_2_10_10_10_REV;
++        case GL_DEPTH_COMPONENT16:
++        case GL_DEPTH_COMPONENT24:
++            if(!format) format = GL_DEPTH_COMPONENT;
++            return GL_UNSIGNED_INT;
++        case GL_DEPTH_COMPONENT32F:
++            if(!format) format = GL_DEPTH_COMPONENT;
++            return GL_FLOAT;
++    }
++#endif
+     GLenum type = GL_UNSIGNED_BYTE;
+     switch(component)
+     {
+diff --git a/src/engine/texture.h b/src/engine/texture.h
+index 7f31f3b..11d69d8 100644
+--- a/src/engine/texture.h
++++ b/src/engine/texture.h
+@@ -282,6 +282,9 @@ struct Shader
+     }
+ 
+     bool compile();
++#ifdef WEBOS_GLES
++    bool compileprograms();
++#endif
+     void cleanup(bool full = false);
+ 
+     static int uniformlocversion();
+diff --git a/src/engine/ui.cpp b/src/engine/ui.cpp
+index 8e3f18a..c95623a 100644
+--- a/src/engine/ui.cpp
++++ b/src/engine/ui.cpp
+@@ -3493,6 +3493,85 @@ namespace UI
+         return true;
+     }
+ 
++#ifdef WEBOS_GLES
++    // LG webOS TVs: the remote's arrows and a controller's D-pad in the menus (webos.cpp). The
++    // cursor jumps to the nearest thing to click that way: a button (uitarget), a slider or a text
++    // field, the innermost one where they nest, and only what shows of it.
++    struct NavTarget { float x0, y0, x1, y1; }; // in pixels of the screen
++
++    static bool isnavtarget(Object *o)
++    {
++        return o->istype<Target>() || o->istype<HorizontalSlider>() || o->istype<VerticalSlider>() ||
++               o->istype<TextEditor>() || o->istype<Field>() || o->istype<KeyField>();
++    }
++
++    // o's children, o being at (ox, oy) in its window's space and visible within (x0, y0)-(x1, y1)
++    static bool findnavtargets(Window *win, Object *o, float ox, float oy, float x0, float y0, float x1, float y1, vector<NavTarget> &out)
++    {
++        float scrollx = 0, scrolly = 0;
++        if(o->istype<Scroller>()) { scrollx = ((Scroller *)o)->offsetx; scrolly = ((Scroller *)o)->offsety; }
++        if(o->istype<Scroller>() || o->istype<Clipper>())
++        {
++            x0 = max(x0, ox); y0 = max(y0, oy);
++            x1 = min(x1, ox + o->w); y1 = min(y1, oy + o->h);
++        }
++        bool found = false;
++        loopv(o->children)
++        {
++            Object *c = o->children[i];
++            float cx = ox + c->x - scrollx, cy = oy + c->y - scrolly;
++            if(c->w <= 0 || c->h <= 0 || cx >= x1 || cy >= y1 || cx + c->w <= x0 || cy + c->h <= y0) continue;
++            bool inner = findnavtargets(win, c, cx, cy, x0, y0, x1, y1, out);
++            if(!inner && isnavtarget(c))
++            {
++                // window space to the cursor's (Window::*children inverted), in pixels
++                NavTarget &t = out.add();
++                t.x0 = (max(cx, x0) + win->x - win->px)/win->pw*hudw;
++                t.y0 = (max(cy, y0) + win->y - win->py)/win->ph*hudh;
++                t.x1 = (min(cx + c->w, x1) + win->x - win->px)/win->pw*hudw;
++                t.y1 = (min(cy + c->h, y1) + win->y - win->py)/win->ph*hudh;
++                inner = true;
++            }
++            if(inner) found = true;
++        }
++        return found;
++    }
++
++    bool navigate(int dx, int dy)
++    {
++        if(!hascursor()) return false;
++        vector<NavTarget> targets;
++        loopv(world->children)
++        {
++            Window *w = (Window *)world->children[i];
++            if(!w->allowinput || w->state&STATE_HIDDEN || w->pw <= 0 || w->ph <= 0) continue;
++            findnavtargets(w, w, 0, 0, w->px - w->x, w->py - w->y, w->px + w->pw - w->x, w->py + w->ph - w->y, targets);
++        }
++        float px = cursorx*hudw, py = cursory*hudh;
++        int best = -1;
++        float bestscore = 1e30f;
++        loopv(targets)
++        {
++            const NavTarget &t = targets[i];
++            if(px >= t.x0 && px < t.x1 && py >= t.y0 && py < t.y1) continue; // the one under the cursor
++            // how far that way, and how far off to the side (none for one in line)
++            float along, across;
++            if(dx) { along = ((t.x0 + t.x1)/2 - px)*dx; across = py < t.y0 ? t.y0 - py : (py > t.y1 ? py - t.y1 : 0); }
++            else { along = ((t.y0 + t.y1)/2 - py)*dy; across = px < t.x0 ? t.x0 - px : (px > t.x1 ? px - t.x1 : 0); }
++            if(along <= 1) continue;
++            float score = along + 3*across;
++            if(score < bestscore) { bestscore = score; best = i; }
++        }
++        if(best >= 0)
++        {
++            const NavTarget &t = targets[best];
++            cursorx = clamp((t.x0 + t.x1)/2/hudw, 0.0f, 1.0f);
++            cursory = clamp((t.y0 + t.y1)/2/hudh, 0.0f, 1.0f);
++        }
++        return true;
++    }
++#endif
++
+     bool keypress(int code, bool isdown)
+     {
+         if(world->rawkey(code, isdown)) return true;
+diff --git a/src/engine/webos.cpp b/src/engine/webos.cpp
+new file mode 100644
+index 0000000..e4235d8
+--- /dev/null
++++ b/src/engine/webos.cpp
+@@ -0,0 +1,312 @@
++// LG webOS TVs: the remote, game controllers and the Home button, with the controls of the
++// Quake III port (config/webos.cfg binds them):
++// - the remote's arrows walk and turn, OK shoots and Back is Escape (the menu);
++// - a game controller's buttons are keys named PAD_* (config/keymap.cfg), its left stick presses
++//   PAD_LS_* keys, which walk, and its right stick looks around;
++// - while a menu has the cursor (and no text is being typed), the remote's arrows and a
++//   controller's D-pad jump it to the next button that way (UI::navigate), OK and Cross (A) click,
++//   Circle (B) goes back, and the sticks move it freely; Options (Start) is Escape everywhere;
++// - Home pauses: the game stops drawing, its sound stops, a local game's time stands still, and the
++//   settings are saved.
++#include "engine.h"
++
++#ifdef WEBOS_GLES
++#include "SDL_mixer.h"
++
++extern int zoom, zoomfov;
++
++VARP(padyawspeed, 10, 200, 1000);    // the right stick, pushed all the way: degrees a second
++VARP(padpitchspeed, 10, 140, 1000);
++VARP(padinvert, 0, 0, 1);            // pushing the right stick up looks down
++VARP(padcursorspeed, 10, 100, 1000); // the cursor, pushed all the way: hundredths of the screen width a second
++VARP(remoteturnspeed, 10, 140, 1000); // the remote's Left and Right: degrees a second
++VARP(webosconfig, 0, 0, 1000);         // the version of config/webos.cfg in use (main.cpp)
++
++enum
++{
++    PAD_KEY = -100,              // PAD_KEY - SDL_CONTROLLER_BUTTON_*: PAD_A is -100
++    PAD_L2 = -120, PAD_R2 = -121,
++    PAD_LS_UP = -130, PAD_LS_DOWN = -131, PAD_LS_LEFT = -132, PAD_LS_RIGHT = -133
++};
++
++// slots for the keys the controllers hold: the buttons, the triggers and the left stick's four ways
++enum { SLOT_L2 = SDL_CONTROLLER_BUTTON_MAX, SLOT_R2, SLOT_LS, NUMSLOTS = SLOT_LS + 4 };
++
++static vector<SDL_GameController *> pads;
++static int held[NUMSLOTS];      // the key each slot pressed, so its release goes to the same key
++static bool turnleft = false, turnright = false;
++static bool wasminimized = false;
++static float cursorrest[2] = { 0, 0 };
++static int dpadheld = -1, dpadnext = 0; // the D-pad's way held in a menu, and when it repeats
++static bool okclick = false;            // the remote's OK pressed as a click
++
++extern int textinputmask;
++
++// the menus take the arrows: no text being typed into a field or the console
++static bool menukeys()
++{
++    return UI::hascursor() && !textinputmask;
++}
++
++static void dpadnavigate(int button)
++{
++    switch(button)
++    {
++        case SDL_CONTROLLER_BUTTON_DPAD_UP: UI::navigate(0, -1); break;
++        case SDL_CONTROLLER_BUTTON_DPAD_DOWN: UI::navigate(0, 1); break;
++        case SDL_CONTROLLER_BUTTON_DPAD_LEFT: UI::navigate(-1, 0); break;
++        case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: UI::navigate(1, 0); break;
++    }
++}
++
++ICOMMAND(turnleft, "D", (int *down), turnleft = *down != 0);
++ICOMMAND(turnright, "D", (int *down), turnright = *down != 0);
++
++static void padkey(int slot, int code, bool down)
++{
++    if(down)
++    {
++        if(held[slot] || !code) return;
++        held[slot] = code;
++        processkey(code, true);
++    }
++    else if(held[slot])
++    {
++        code = held[slot];
++        held[slot] = 0;
++        processkey(code, false);
++    }
++}
++
++static void releasepadkeys()
++{
++    loopi(NUMSLOTS) padkey(i, 0, false);
++}
++
++// in a menu Cross clicks and Circle goes back, and the D-pad moves between buttons (webosevent)
++static int buttonkey(int button)
++{
++    if(button == SDL_CONTROLLER_BUTTON_START) return SDLK_ESCAPE;
++    if(UI::hascursor()) switch(button)
++    {
++        case SDL_CONTROLLER_BUTTON_A: return -1;
++        case SDL_CONTROLLER_BUTTON_B: return SDLK_ESCAPE;
++        case SDL_CONTROLLER_BUTTON_DPAD_UP:
++        case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
++        case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
++        case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
++            return 0;
++    }
++    return PAD_KEY - button;
++}
++
++static void setminimized(bool on)
++{
++    if(minimized == on) return;
++    minimized = on;
++    logoutf(on ? "webOS: in the background, paused" : "webOS: back in the foreground");
++    if(on)
++    {
++        releasepadkeys();
++        turnleft = turnright = false;
++        // the TV may close the app from here without asking it to quit, which is when the
++        // settings would be saved
++        writecfg();
++    }
++}
++
++// the events Tesseract doesn't know: true when handled
++bool webosevent(const SDL_Event &e)
++{
++    switch(e.type)
++    {
++        case SDL_CONTROLLERDEVICEADDED:
++            if(SDL_IsGameController(e.cdevice.which))
++            {
++                SDL_GameController *pad = SDL_GameControllerOpen(e.cdevice.which);
++                if(pad)
++                {
++                    pads.add(pad);
++                    conoutf("game controller: %s", SDL_GameControllerName(pad));
++                }
++            }
++            return true;
++
++        case SDL_CONTROLLERDEVICEREMOVED:
++            loopv(pads) if(SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(pads[i])) == e.cdevice.which)
++            {
++                SDL_GameControllerClose(pads[i]);
++                pads.remove(i);
++                releasepadkeys();
++                break;
++            }
++            return true;
++
++        case SDL_CONTROLLERBUTTONDOWN:
++        case SDL_CONTROLLERBUTTONUP:
++            if(e.cbutton.button >= SDL_CONTROLLER_BUTTON_DPAD_UP && e.cbutton.button <= SDL_CONTROLLER_BUTTON_DPAD_RIGHT)
++            {
++                if(e.type == SDL_CONTROLLERBUTTONUP && dpadheld == e.cbutton.button) dpadheld = -1;
++                else if(e.type == SDL_CONTROLLERBUTTONDOWN && menukeys())
++                {
++                    dpadnavigate(e.cbutton.button);
++                    dpadheld = e.cbutton.button;
++                    dpadnext = SDL_GetTicks() + 400;
++                    return true;
++                }
++            }
++            if(e.cbutton.button < SDL_CONTROLLER_BUTTON_MAX)
++                padkey(e.cbutton.button, buttonkey(e.cbutton.button), e.type == SDL_CONTROLLERBUTTONDOWN);
++            return true;
++
++        case SDL_CONTROLLERAXISMOTION:
++            if(e.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT || e.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERRIGHT)
++            {
++                bool left = e.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT;
++                int slot = left ? SLOT_L2 : SLOT_R2;
++                if(e.caxis.value > 16000) padkey(slot, left ? PAD_L2 : PAD_R2, true);
++                else if(e.caxis.value < 8000) padkey(slot, 0, false);
++            }
++            return true;
++
++        case SDL_CONTROLLERDEVICEREMAPPED:
++        case SDL_JOYAXISMOTION: case SDL_JOYBALLMOTION: case SDL_JOYHATMOTION:
++        case SDL_JOYBUTTONDOWN: case SDL_JOYBUTTONUP: case SDL_JOYDEVICEADDED: case SDL_JOYDEVICEREMOVED:
++            return true;
++
++        case SDL_KEYDOWN:
++        case SDL_KEYUP:
++            // the remote's Back button
++            if(e.key.keysym.scancode == SDL_SCANCODE_WEBOS_BACK)
++            {
++                if(!e.key.repeat) processkey(SDLK_ESCAPE, e.type == SDL_KEYDOWN);
++                return true;
++            }
++            // OK (when the pointer isn't showing) clicks in a menu
++            if(e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER)
++            {
++                if(e.type == SDL_KEYDOWN && !e.key.repeat && !okclick && menukeys())
++                {
++                    okclick = true;
++                    processkey(-1, true);
++                    return true;
++                }
++                if(e.type == SDL_KEYUP && okclick)
++                {
++                    okclick = false;
++                    processkey(-1, false);
++                    return true;
++                }
++                return false;
++            }
++            // the arrows move between a menu's buttons, repeating while held; their releases go on
++            // to the game, so a key held when a menu opened lets go
++            if(e.type == SDL_KEYDOWN && menukeys()) switch(e.key.keysym.sym)
++            {
++                case SDLK_UP: UI::navigate(0, -1); return true;
++                case SDLK_DOWN: UI::navigate(0, 1); return true;
++                case SDLK_LEFT: UI::navigate(-1, 0); return true;
++                case SDLK_RIGHT: UI::navigate(1, 0); return true;
++            }
++            return false;
++
++        case SDL_WINDOWEVENT:
++            switch(e.window.event)
++            {
++                case SDL_WINDOWEVENT_FOCUS_LOST:
++                case SDL_WINDOWEVENT_HIDDEN:
++                case SDL_WINDOWEVENT_MINIMIZED:
++                    setminimized(true);
++                    break;
++                case SDL_WINDOWEVENT_FOCUS_GAINED:
++                case SDL_WINDOWEVENT_SHOWN:
++                case SDL_WINDOWEVENT_RESTORED:
++                    setminimized(false);
++                    break;
++            }
++            return false;
++    }
++    return false;
++}
++
++static float padaxis(SDL_GameControllerAxis axis)
++{
++    int sum = 0;
++    loopv(pads) sum += SDL_GameControllerGetAxis(pads[i], axis);
++    return clamp(sum/32767.0f, -1.0f, 1.0f);
++}
++
++// past a dead zone, and gentler near the middle
++static float stickcurve(float v)
++{
++    float a = fabs(v);
++    if(a < 0.15f) return 0;
++    a = (a - 0.15f)/0.85f;
++    return v < 0 ? -a*a : a*a;
++}
++
++// each frame, with the milliseconds since the last
++void webosupdate(int millis)
++{
++    if(minimized != wasminimized)
++    {
++        wasminimized = minimized;
++        if(minimized) { Mix_Pause(-1); Mix_PauseMusic(); }
++        else { Mix_Resume(-1); Mix_ResumeMusic(); }
++    }
++    if(minimized || millis <= 0) return;
++    float secs = min(millis, 100)/1000.0f;
++
++    if(UI::hascursor())
++    {
++        // the menus: a held D-pad goes on to the next button, and the sticks move the cursor
++        loopi(4) padkey(SLOT_LS + i, 0, false);
++        turnleft = turnright = false;
++        if(pads.empty()) return;
++        if(dpadheld >= 0 && int(SDL_GetTicks() - dpadnext) >= 0)
++        {
++            if(menukeys()) dpadnavigate(dpadheld);
++            dpadnext += 150;
++        }
++        float dx = stickcurve(padaxis(SDL_CONTROLLER_AXIS_LEFTX)) + stickcurve(padaxis(SDL_CONTROLLER_AXIS_RIGHTX)),
++              dy = stickcurve(padaxis(SDL_CONTROLLER_AXIS_LEFTY)) + stickcurve(padaxis(SDL_CONTROLLER_AXIS_RIGHTY));
++        float speed = hudw*padcursorspeed/100.0f*secs;
++        cursorrest[0] += clamp(dx, -1.0f, 1.0f)*speed;
++        cursorrest[1] += clamp(dy, -1.0f, 1.0f)*speed;
++        int mx = int(cursorrest[0]), my = int(cursorrest[1]);
++        cursorrest[0] -= mx;
++        cursorrest[1] -= my;
++        if(mx || my) UI::movecursor(mx, my);
++        return;
++    }
++    cursorrest[0] = cursorrest[1] = 0;
++
++    // the game: the left stick walks, by keys
++    if(!pads.empty())
++    {
++        float x = padaxis(SDL_CONTROLLER_AXIS_LEFTX), y = padaxis(SDL_CONTROLLER_AXIS_LEFTY);
++        const float on = 0.5f, off = 0.35f;
++        const struct { float v; int code; } ways[4] = { { -y, PAD_LS_UP }, { y, PAD_LS_DOWN }, { -x, PAD_LS_LEFT }, { x, PAD_LS_RIGHT } };
++        loopi(4)
++        {
++            if(ways[i].v > on) padkey(SLOT_LS + i, ways[i].code, true);
++            else if(ways[i].v < off) padkey(SLOT_LS + i, 0, false);
++        }
++    }
++
++    // the right stick and the remote's Left and Right turn
++    if(!game::allowmouselook()) return;
++    float yaw = 0, pitch = 0;
++    if(!pads.empty())
++    {
++        yaw = stickcurve(padaxis(SDL_CONTROLLER_AXIS_RIGHTX))*padyawspeed;
++        pitch = -stickcurve(padaxis(SDL_CONTROLLER_AXIS_RIGHTY))*padpitchspeed*(padinvert ? -1 : 1);
++    }
++    if(turnleft) yaw -= remoteturnspeed;
++    if(turnright) yaw += remoteturnspeed;
++    if(!yaw && !pitch) return;
++    float scale = secs;
++    if(zoom) scale *= float(zoomfov)/fov;
++    modifyorient(yaw*scale, pitch*scale);
++}
++#endif
+diff --git a/src/shared/glexts.h b/src/shared/glexts.h
+index ede3941..ce8bbe7 100644
+--- a/src/shared/glexts.h
++++ b/src/shared/glexts.h
+@@ -841,3 +841,27 @@ extern PFNGLGETDEBUGMESSAGELOGPROC glGetDebugMessageLog_;
+ // GL_ARB_copy_image
+ extern PFNGLCOPYIMAGESUBDATAPROC glCopyImageSubData_;
+ 
++
++#ifdef WEBOS_GLES
++// LG webOS TVs: OpenGL ES 3.2 in place of desktop OpenGL. Desktop GL's headers declare everything,
++// the TV's libGLESv2 has the functions the two share, and these stand in for the desktop-only ones.
++// Rectangle textures are 2D textures, which the shaders sample in pixels (shader.cpp's macros).
++#undef GL_TEXTURE_RECTANGLE
++#define GL_TEXTURE_RECTANGLE GL_TEXTURE_2D
++extern "C"
++{
++    GLAPI void APIENTRY glClearDepthf(GLfloat depth);
++    GLAPI void APIENTRY glDepthRangef(GLfloat n, GLfloat f);
++}
++#define glClearDepth(depth) glClearDepthf(depth)
++#define glDepthRange(n, f) glDepthRangef(n, f)
++static inline void gles_drawbuffer(GLenum buf) { glDrawBuffers_(1, &buf); }
++#define glDrawBuffer(buf) gles_drawbuffer(buf)
++// no wireframe (the editor's outlines are drawn filled), nor reading compressed textures back
++#define glPolygonMode(face, mode) ((void)0)
++#define glGetCompressedTexImage(target, level, img) ((void)0)
++// program binaries, for shader.cpp's program cache
++extern PFNGLGETPROGRAMBINARYPROC glGetProgramBinary_;
++extern PFNGLPROGRAMBINARYPROC glProgramBinary_;
++extern PFNGLPROGRAMPARAMETERIPROC glProgramParameteri_;
++#endif
+diff --git a/src/shared/tools.h b/src/shared/tools.h
+index 4cbe103..0be99d1 100644
+--- a/src/shared/tools.h
++++ b/src/shared/tools.h
+@@ -36,10 +36,7 @@ typedef unsigned long long int ullong;
+ 
+ void *operator new(size_t, bool);
+ void *operator new[](size_t, bool);
+-inline void *operator new(size_t, void *p) { return p; }
+-inline void *operator new[](size_t, void *p) { return p; }
+-inline void operator delete(void *, void *) {}
+-inline void operator delete[](void *, void *) {}
++#include <new> // placement new: newer C++ headers (GCC 16's <cmath>) declare it already
+ 
+ #ifdef swap
+ #undef swap

@@ -1,0 +1,14 @@
+{
+  "id": "com.pulp.tesseract",
+  "version": "0.1.0",
+  "vendor": "Pulp",
+  "type": "native",
+  "main": "tesseract",
+  "title": "Tesseract",
+  "icon": "icon.png",
+  "largeIcon": "largeIcon.png",
+  "iconColor": "#000000",
+  "useAllMouseButtons": true,
+  "useAllKeyboardKeys": true,
+  "cloudgame_active": true
+}

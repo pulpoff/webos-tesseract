@@ -1,0 +1,8 @@
+/tesseract-src
+/resseract
+/build
+/toolchain
+/output
+/downloads
+/prefix
+__pycache__/
