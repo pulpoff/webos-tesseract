@@ -1,5 +1,3 @@
-Tesseract for LG webOS: the patch to Tesseract and the scripts.
-
 Copyright (C) 2026 pulpoff
 
 This software is provided 'as-is', without any express or implied
@@ -17,6 +15,3 @@ freely, subject to the following restrictions:
 2. Altered source versions must be plainly marked as such, and must not be
    misrepresented as being the original software.
 3. This notice may not be removed or altered from any source distribution.
-
-Tesseract itself (fetched by build.sh) is under its own license, in its
-src/readme_tesseract.txt, and its media under the licenses beside them.
